@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로지스틱 성장 + 수확 · 분기 시각화</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --ink:#15181d; --muted:#6b7280;
+    --line:#d9dde3; --grid:#eceff3; --accent:#2563eb; --accent2:#d9480f;
+    --stable:#0f9d58; --unstable:#d93025; --faint:#9aa3af; --warn:#b45309;
+    --shadow:0 1px 3px rgba(0,0,0,.07);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#101317; --panel:#171b21; --ink:#e8ebef; --muted:#98a1ae;
+      --line:#2b3139; --grid:#22272e; --accent:#5b9bff; --accent2:#ff9d5c;
+      --stable:#3ddc84; --unstable:#ff6b5e; --faint:#4d5561; --warn:#f0b429;
+      --shadow:none;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Segoe UI",Roboto,sans-serif;}
+  header{padding:22px 24px 10px;max-width:1180px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 6px;letter-spacing:-.2px}
+  .eq{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:14px;color:var(--muted)}
+  main{max-width:1180px;margin:0 auto;padding:8px 24px 40px;display:grid;
+    grid-template-columns:290px 1fr;gap:18px;align-items:start}
+  @media (max-width:900px){ main{grid-template-columns:1fr} }
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:600;letter-spacing:.02em}
+  .ctrl{margin-bottom:15px}
+  .ctrl label{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:6px}
+  .ctrl .val{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:13px;color:var(--accent)}
+  input[type=range]{width:100%;accent-color:var(--accent);margin:0}
+  .hint{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5}
+  .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:14px}
+  .seg label{flex:1;text-align:center;font-size:12px;padding:7px 4px;cursor:pointer;color:var(--muted)}
+  .seg input{display:none}
+  .seg input:checked + span{color:var(--panel);background:var(--accent);display:block;margin:-7px -4px;padding:7px 4px}
+  .seg label span{display:block}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+  button{font:inherit;font-size:12px;padding:6px 10px;border-radius:7px;border:1px solid var(--line);
+    background:transparent;color:var(--ink);cursor:pointer}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  .chk{display:flex;align-items:center;gap:8px;font-size:13px;margin-top:10px}
+  .plots{display:grid;gap:18px}
+  canvas{width:100%;display:block;border-radius:8px}
+  #cPara{height:340px} #cTime{height:320px} #cBif{height:310px} #cPer{height:230px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px;margin-top:14px}
+  .stat{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .stat .k{font-size:11px;color:var(--muted)}
+  .stat .v{font-size:15px;font-family:"SF Mono",ui-monospace,Menlo,monospace;margin-top:2px}
+  .status{margin-top:12px;border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.55;
+    border:1px solid var(--line)}
+  .status.ok{border-color:var(--stable)} .status.bad{border-color:var(--unstable)}
+  .status.edge{border-color:var(--warn)}
+  .status b{font-size:13px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:10px}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .legend i.dash{border-radius:0;height:0;border-top:2px dashed currentColor;width:14px;vertical-align:3px}
+  footer{max-width:1180px;margin:0 auto;padding:0 24px 48px;font-size:12.5px;color:var(--muted);line-height:1.75}
+  footer h3{font-size:13px;color:var(--ink);margin:18px 0 6px}
+  code{font-family:"SF Mono",ui-monospace,Menlo,monospace;background:var(--grid);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>로지스틱 성장 + 수확 — 파라미터에 따른 2차 곡선과 분기</h1>
+  <div class="eq" id="eqline"></div>
+</header>
+
+<main>
+  <section class="card" aria-label="파라미터">
+    <h2>수확 방식</h2>
+    <div class="seg">
+      <label><input type="radio" name="mode" value="prop" checked><span>비례 수확 −hN</span></label>
+      <label><input type="radio" name="mode" value="quota"><span>정량 수확 −H</span></label>
+    </div>
+
+    <div class="ctrl" id="boxH">
+      <label for="hv0">수확 강도 <span id="hname">h</span> <span class="val" id="hv"></span></label>
+      <input type="range" id="hv0" min="0" max="1" step="0.005" value="0.2">
+      <div class="hint" id="hhint"></div>
+    </div>
+
+    <h2 style="margin-top:18px">개체군 파라미터</h2>
+    <div class="ctrl">
+      <label for="r">내재적 증가율 r <span class="val" id="rv"></span></label>
+      <input type="range" id="r" min="0.05" max="2" step="0.01" value="0.6">
+    </div>
+    <div class="ctrl">
+      <label for="K">환경 수용력 K <span class="val" id="Kv"></span></label>
+      <input type="range" id="K" min="100" max="2000" step="10" value="1000">
+    </div>
+    <div class="ctrl">
+      <label for="N0">초기 개체수 N₀ <span class="val" id="N0v"></span></label>
+      <input type="range" id="N0" min="1" max="2500" step="5" value="500">
+    </div>
+    <div class="ctrl">
+      <label for="tmax">시간 범위 t <span class="val" id="tmaxv"></span></label>
+      <input type="range" id="tmax" min="5" max="120" step="1" value="40">
+    </div>
+
+    <label class="chk"><input type="checkbox" id="multi" checked> 여러 초기값 궤적 함께 보기</label>
+    <label class="chk"><input type="checkbox" id="showParts" checked> 성장 곡선·수확 곡선 분해해서 보기</label>
+
+    <div class="row" style="margin-top:14px">
+      <button data-preset="prop,0,0.6,1000,500,40">수확 없음</button>
+      <button data-preset="prop,0.3,0.6,1000,500,40">지속 가능</button>
+      <button data-preset="prop,0.59,0.6,1000,500,40">초임계 분기 직전</button>
+      <button data-preset="prop,0.85,0.6,1000,500,40">수확 과다 → 멸종</button>
+      <button data-preset="quota,140,0.6,1000,500,40">MSY 근처</button>
+      <button data-preset="quota,165,0.6,1000,500,40">안장-마디 이후 붕괴</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="k">평형점 N*</div><div class="v" id="sEq"></div></div>
+      <div class="stat"><div class="k" id="sBifK">분기점</div><div class="v" id="sBif"></div></div>
+      <div class="stat"><div class="k">최대 지속 생산량</div><div class="v" id="sMsy"></div></div>
+      <div class="stat"><div class="k">현재 지속 수확량</div><div class="v" id="sYield"></div></div>
+    </div>
+    <div class="status" id="status"></div>
+  </section>
+
+  <section class="plots">
+    <div class="card">
+      <h2>① 성장 속도 곡선 f(N) — 수확이 포물선을 어떻게 바꾸는가</h2>
+      <canvas id="cPara"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--accent)"></i>f(N) = 성장 − 수확</span>
+        <span><i class="dash" style="color:var(--faint)"></i>순수 로지스틱 성장 rN(1−N/K)</span>
+        <span><i style="background:var(--warn)"></i>수확 곡선</span>
+        <span><i style="background:var(--stable)"></i>안정 평형</span>
+        <span><i style="background:var(--unstable)"></i>불안정 평형</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>② 시간에 따른 개체수 N(t)</h2>
+      <canvas id="cTime"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--accent2)"></i>N₀에서 출발한 궤적(RK4)</span>
+        <span><i style="background:var(--faint)"></i>다른 초기값</span>
+        <span><i class="dash" style="color:var(--unstable)"></i>불안정 평형 = 멸종 문턱(분리선)</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>③ 분기 다이어그램 — 수확 강도에 따른 평형점의 운명</h2>
+      <canvas id="cBif"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--stable)"></i>안정 가지(실선)</span>
+        <span><i class="dash" style="color:var(--unstable)"></i>불안정 가지(점선)</span>
+        <span><i style="background:var(--accent2)"></i>현재 설정</span>
+        <span id="bifNote"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>④ 1인당 성장률 (1/N)·dN/dt</h2>
+      <canvas id="cPer"></canvas>
+      <div class="legend"><span id="perNote"></span></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <h3>비례 수확 (constant effort) — 초임계 분기 transcritical bifurcation</h3>
+  <code>dN/dt = rN(1 − N/K) − hN</code> 는 여전히 N에 대한 2차식이고, 정리하면
+  <code>N·((r − h) − (r/K)N)</code> 입니다. 근은 <code>N = 0</code>과 <code>N = K(1 − h/r)</code>.
+  수확 강도 h를 올리면 두 번째 근이 왼쪽으로 밀려오다가 <b>h = r</b>에서 N=0과 충돌하고,
+  그 순간 두 평형점이 안정성을 <b>맞바꿉니다</b>. 이후에는 0이 유일한 안정 평형 — 멸종이 확정됩니다.
+  지속 수확량 <code>Y(h) = h·K(1 − h/r)</code>은 <code>h = r/2</code>에서 최대 <code>rK/4</code>(MSY)입니다.
+
+  <h3>정량 수확 (constant yield) — 안장-마디 분기 saddle-node bifurcation</h3>
+  <code>dN/dt = rN(1 − N/K) − H</code> 는 포물선 전체가 아래로 <b>H만큼 평행이동</b>한 모양입니다.
+  근은 <code>N± = (K/2)(1 ± √(1 − 4H/rK))</code>. H를 올리면 두 근이 서로 다가오다가
+  <b>H* = rK/4</b>(포물선 꼭짓점 높이 = MSY)에서 <code>N = K/2</code>에 겹쳐 사라집니다.
+  임계점을 <b>조금만</b>넘겨도 평형점이 통째로 없어져 어떤 초기값에서든 개체군이 붕괴합니다 —
+  경고 없이 무너지는 이 급변이 비례 수확과의 결정적 차이입니다.
+  H &lt; H*일 때 작은 근 N−는 불안정한 <b>멸종 문턱</b>이라, 그 아래에서 시작한 개체군은 수확을 견디지 못합니다.
+</footer>
+
+<script>
+"use strict";
+
+/* ---------- 눈금 유틸 ---------- */
+function niceNum(range, round){
+  if(range <= 0) return 1;
+  const exp = Math.floor(Math.log10(range));
+  const f = range / Math.pow(10, exp);
+  let nf;
+  if(round) nf = f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10;
+  else      nf = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10;
+  return nf * Math.pow(10, exp);
+}
+function ticks(min, max, n){
+  const step = niceNum(niceNum(max - min, false) / (n - 1), true);
+  const start = Math.ceil(min / step) * step;
+  const out = [];
+  for(let v = start; v <= max + step * 1e-6; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  return out;
+}
+function fmt(v){
+  const a = Math.abs(v);
+  if(a === 0) return "0";
+  if(a >= 1000) return (v / 1000).toFixed(a % 1000 === 0 ? 0 : 1) + "k";
+  if(a >= 10) return v.toFixed(0);
+  if(a >= 1) return v.toFixed(1);
+  return v.toFixed(2);
+}
+function css(name){ return getComputedStyle(document.body).getPropertyValue(name).trim(); }
+
+/* ---------- 플롯 ---------- */
+function setupCanvas(cv){
+  const dpr = window.devicePixelRatio || 1;
+  const rect = cv.getBoundingClientRect();
+  cv.width = Math.round(rect.width * dpr);
+  cv.height = Math.round(rect.height * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  return { ctx, w: rect.width, h: rect.height };
+}
+function makeAxes(cv, dom, opt){
+  const { ctx, w, h } = setupCanvas(cv);
+  const m = { l: 64, r: 20, t: 14, b: 40 };
+  const X = x => m.l + (x - dom.x0) / (dom.x1 - dom.x0) * (w - m.l - m.r);
+  const Y = y => h - m.b - (y - dom.y0) / (dom.y1 - dom.y0) * (h - m.t - m.b);
+  const grid = css("--grid"), line = css("--line"), muted = css("--muted");
+  const xs = ticks(dom.x0, dom.x1, 7), ys = ticks(dom.y0, dom.y1, 6);
+
+  ctx.lineWidth = 1; ctx.strokeStyle = grid; ctx.beginPath();
+  xs.forEach(v => { ctx.moveTo(Math.round(X(v)) + .5, m.t); ctx.lineTo(Math.round(X(v)) + .5, h - m.b); });
+  ys.forEach(v => { ctx.moveTo(m.l, Math.round(Y(v)) + .5); ctx.lineTo(w - m.r, Math.round(Y(v)) + .5); });
+  ctx.stroke();
+
+  ctx.font = "11px -apple-system, system-ui, sans-serif"; ctx.fillStyle = muted;
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  xs.forEach(v => ctx.fillText(fmt(v), X(v), h - m.b + 7));
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  ys.forEach(v => ctx.fillText(fmt(v), m.l - 8, Y(v)));
+
+  ctx.strokeStyle = line; ctx.lineWidth = 1.2; ctx.beginPath();
+  if(dom.y0 <= 0 && dom.y1 >= 0){ ctx.moveTo(m.l, Math.round(Y(0)) + .5); ctx.lineTo(w - m.r, Math.round(Y(0)) + .5); }
+  ctx.moveTo(Math.round(X(Math.max(dom.x0, 0))) + .5, m.t);
+  ctx.lineTo(Math.round(X(Math.max(dom.x0, 0))) + .5, h - m.b);
+  ctx.stroke();
+
+  ctx.fillStyle = muted; ctx.font = "12px -apple-system, system-ui, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+  ctx.fillText(opt.xlabel, m.l + (w - m.l - m.r) / 2, h - 6);
+  ctx.save();
+  ctx.translate(15, m.t + (h - m.t - m.b) / 2);
+  ctx.rotate(-Math.PI / 2); ctx.textBaseline = "top";
+  ctx.fillText(opt.ylabel, 0, 0);
+  ctx.restore();
+
+  return { ctx, w, h, m, X, Y, dom };
+}
+function clip(p, fn){
+  const { ctx, m, w, h } = p;
+  ctx.save(); ctx.beginPath();
+  ctx.rect(m.l - 1, m.t - 1, w - m.l - m.r + 2, h - m.t - m.b + 2);
+  ctx.clip(); fn(); ctx.restore();
+}
+function curve(p, fn, x0, x1, color, width, dash){
+  const { ctx, X, Y } = p;
+  clip(p, () => {
+    ctx.save();
+    ctx.setLineDash(dash || []);
+    ctx.strokeStyle = color; ctx.lineWidth = width || 2; ctx.lineJoin = "round";
+    ctx.beginPath();
+    const N = 700; let started = false;
+    for(let i = 0; i <= N; i++){
+      const x = x0 + (x1 - x0) * i / N, y = fn(x);
+      if(!isFinite(y)){ started = false; continue; }
+      const py = Math.min(Math.max(Y(y), -1e4), 1e4);
+      if(!started){ ctx.moveTo(X(x), py); started = true; } else ctx.lineTo(X(x), py);
+    }
+    ctx.stroke(); ctx.restore();
+  });
+}
+function polyline(p, pts, color, width, dash){
+  const { ctx, X, Y } = p;
+  if(pts.length < 2) return;
+  clip(p, () => {
+    ctx.save();
+    ctx.setLineDash(dash || []);
+    ctx.strokeStyle = color; ctx.lineWidth = width || 2; ctx.lineJoin = "round";
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y)));
+    ctx.stroke(); ctx.restore();
+  });
+}
+function dot(p, x, y, color, filled, rad){
+  const { ctx, X, Y } = p;
+  clip(p, () => {
+    ctx.save();
+    ctx.lineWidth = 2; ctx.strokeStyle = color;
+    ctx.fillStyle = filled ? color : css("--panel");
+    ctx.beginPath(); ctx.arc(X(x), Y(y), rad || 5, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke(); ctx.restore();
+  });
+}
+function label(p, x, y, text, color, align, dy){
+  const { ctx, X, Y } = p;
+  ctx.save();
+  ctx.fillStyle = color; ctx.font = "12px -apple-system, system-ui, sans-serif";
+  ctx.textAlign = align || "center"; ctx.textBaseline = "middle";
+  ctx.fillText(text, X(x), Y(y) + (dy || 0));
+  ctx.restore();
+}
+function vline(p, x, y0, y1, color, dash){
+  const { ctx, X, Y } = p;
+  clip(p, () => {
+    ctx.save(); ctx.setLineDash(dash || [3, 4]); ctx.strokeStyle = color; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(X(x), Y(y0)); ctx.lineTo(X(x), Y(y1)); ctx.stroke(); ctx.restore();
+  });
+}
+function arrow(p, xFrom, xTo, y, color){
+  const { ctx, X, Y } = p;
+  const a = X(xFrom), b = X(xTo), yy = Y(y);
+  clip(p, () => {
+    ctx.save();
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(a, yy); ctx.lineTo(b, yy); ctx.stroke();
+    const d = Math.sign(b - a) * 6;
+    ctx.beginPath(); ctx.moveTo(b, yy); ctx.lineTo(b - d, yy - 4); ctx.lineTo(b - d, yy + 4);
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  });
+}
+
+/* ---------- 모델 ---------- */
+const P = { mode: "prop", h: 0.2, r: 0.6, K: 1000, N0: 500, tmax: 40 };
+
+const logistic = (N, r, K) => r * N * (1 - N / K);
+const harvest  = N => P.mode === "prop" ? P.h * N : P.h;          // 수확 곡선
+const f = N => logistic(N, P.r, P.K) - harvest(N);                 // 순 성장 속도
+const fprime = N => P.r - 2 * P.r * N / P.K - (P.mode === "prop" ? P.h : 0);
+
+// 평형점: [{N, stable}]
+function equilibria(){
+  const { r, K, h, mode } = P;
+  const out = [];
+  if(mode === "prop"){
+    out.push({ N: 0, stable: h > r });
+    const Nq = K * (1 - h / r);
+    if(Nq > 0) out.push({ N: Nq, stable: true });
+    else if(Math.abs(h - r) < 1e-9) out[0].stable = true;
+  }else{
+    const Hstar = r * K / 4;
+    if(h <= Hstar + 1e-12){
+      const s = Math.sqrt(Math.max(0, 1 - h / Hstar));
+      const Nm = K / 2 * (1 - s), Np = K / 2 * (1 + s);
+      if(s > 1e-9){ out.push({ N: Nm, stable: false }); out.push({ N: Np, stable: true }); }
+      else out.push({ N: K / 2, stable: null });   // 분기점: 반안정
+    }
+  }
+  return out;
+}
+const bifPoint = () => P.mode === "prop" ? P.r : P.r * P.K / 4;    // h* 또는 H*
+const msy = () => P.r * P.K / 4;
+function yieldNow(){
+  const eq = equilibria().filter(e => e.stable !== false && e.N > 1e-9);
+  if(!eq.length) return 0;
+  const Nst = Math.max(...eq.map(e => e.N));
+  return P.mode === "prop" ? P.h * Nst : P.h;
+}
+
+function rk4(N0, tmax, steps){
+  const dt = tmax / steps, out = [[0, N0]];
+  let N = N0;
+  for(let i = 1; i <= steps; i++){
+    const k1 = f(N), k2 = f(N + dt / 2 * k1), k3 = f(N + dt / 2 * k2), k4 = f(N + dt * k3);
+    N += dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4);
+    if(!isFinite(N)) break;
+    if(N <= 0){ out.push([i * dt, 0]); out.push([tmax, 0]); break; }  // 멸종에서 멈춤
+    out.push([i * dt, N]);
+  }
+  return out;
+}
+
+/* ---------- ① f(N) 곡선 ---------- */
+function drawPara(){
+  const { r, K, N0 } = P;
+  const x1 = K * 1.45;
+  const yMax = r * K / 4, yMin = logistic(x1, r, K) - (P.mode === "prop" ? P.h * x1 : P.h);
+  const pad = Math.max((yMax - yMin) * 0.12, yMax * 0.2);
+  const p = makeAxes(document.getElementById("cPara"),
+    { x0: -K * 0.06, x1, y0: yMin - pad, y1: yMax + pad * 1.3 },
+    { xlabel: "개체수 N", ylabel: "속도 dN/dt" });
+  const acc = css("--accent"), acc2 = css("--accent2"), st = css("--stable"),
+        un = css("--unstable"), muted = css("--muted"), warn = css("--warn"), faint = css("--faint");
+  const { ctx, X, Y } = p;
+
+  // f(N) > 0 영역 음영
+  clip(p, () => {
+    ctx.save(); ctx.beginPath(); let open = false;
+    for(let i = 0; i <= 400; i++){
+      const x = x1 * i / 400, y = f(x);
+      if(y > 0){ if(!open){ ctx.moveTo(X(x), Y(0)); open = true; } ctx.lineTo(X(x), Y(y)); }
+      else if(open){ ctx.lineTo(X(x), Y(0)); ctx.closePath(); open = false; }
+    }
+    if(open) ctx.lineTo(X(x1), Y(0));
+    ctx.fillStyle = acc + "1f"; ctx.fill(); ctx.restore();
+  });
+
+  if(document.getElementById("showParts").checked){
+    curve(p, x => logistic(x, r, K), -K * 0.06, x1, faint, 1.5, [5, 4]);
+    curve(p, x => harvest(x), -K * 0.06, x1, warn, 1.8);
+    label(p, x1 * 0.97, harvest(x1 * 0.97), P.mode === "prop" ? "수확 hN" : "수확 H",
+          warn, "right", P.mode === "prop" ? -12 : -12);
+  }
+  curve(p, f, -K * 0.06, x1, acc, 2.4);
+
+  // 평형점 + 위상선 화살표
+  const eqs = equilibria();
+  eqs.forEach(e => {
+    const c = e.stable === null ? warn : e.stable ? st : un;
+    dot(p, e.N, 0, c, e.stable !== false, 5.5);
+    label(p, e.N, 0, "N* = " + e.N.toFixed(0), c, "center", 18);
+  });
+  const ay = p.dom.y0 * 0.5;
+  const marks = [0, ...eqs.map(e => e.N).sort((a, b) => a - b), x1];
+  for(let i = 0; i < marks.length - 1; i++){
+    const a = marks[i], b = marks[i + 1];
+    if(b - a < K * 0.08) continue;
+    const mid = (a + b) / 2, dir = Math.sign(f(mid));
+    if(dir === 0) continue;
+    const s = a + (b - a) * (dir > 0 ? 0.25 : 0.75), t = a + (b - a) * (dir > 0 ? 0.75 : 0.25);
+    arrow(p, s, t, ay, dir > 0 ? st : un);
+  }
+  label(p, x1 * 0.5, ay, "화살표 = 개체수가 움직이는 방향", muted, "center", 16);
+
+  if(N0 <= x1){
+    vline(p, N0, 0, f(N0), acc2, [2, 3]);
+    dot(p, N0, f(N0), acc2, true, 5);
+    label(p, N0, f(N0), "N₀", acc2, "center", f(N0) >= 0 ? -13 : 14);
+  }
+  if(!eqs.length){
+    label(p, K * 0.6, yMax * 0.5, "평형점 없음 — 곡선 전체가 0 아래", un, "center", 0);
+  }
+}
+
+/* ---------- ② 시간 궤적 ---------- */
+function drawTime(){
+  const { K, N0, tmax } = P;
+  const p = makeAxes(document.getElementById("cTime"),
+    { x0: 0, x1: tmax, y0: 0, y1: Math.max(K * 1.25, N0 * 1.12) },
+    { xlabel: "시간 t", ylabel: "개체수 N(t)" });
+  const acc2 = css("--accent2"), st = css("--stable"), un = css("--unstable"), faint = css("--faint");
+
+  const eqs = equilibria();
+  eqs.forEach(e => {
+    const c = e.stable ? st : un;
+    polyline(p, [[0, e.N], [tmax, e.N]], c, 1.4, e.stable ? [5, 5] : [3, 4]);
+    label(p, tmax * 0.99, e.N, e.stable ? "안정 N*" : "멸종 문턱", c, "right", -10);
+  });
+
+  if(document.getElementById("multi").checked){
+    const fr = [0.03, 0.12, 0.3, 0.55, 0.8, 1.05, 1.22].map(v => K * v);
+    const un0 = eqs.find(e => e.stable === false && e.N > 1e-6);
+    if(un0) fr.push(un0.N * 0.93, un0.N * 1.07);
+    fr.forEach(v => polyline(p, rk4(v, tmax, 700), faint, 1.2));
+  }
+  polyline(p, rk4(N0, tmax, 1400), acc2, 2.4);
+  dot(p, 0, N0, acc2, true, 4.5);
+}
+
+/* ---------- ③ 분기 다이어그램 ---------- */
+function drawBif(){
+  const { r, K, mode, h } = P;
+  const bp = bifPoint(), xmax = bp * 1.7 || 1;
+  const p = makeAxes(document.getElementById("cBif"),
+    { x0: 0, x1: xmax, y0: -K * 0.14, y1: K * 1.12 },
+    { xlabel: mode === "prop" ? "수확 강도 h" : "수확량 H", ylabel: "평형 개체수 N*" });
+  const st = css("--stable"), un = css("--unstable"), acc2 = css("--accent2"),
+        muted = css("--muted"), warn = css("--warn");
+  const { ctx, X, Y } = p;
+
+  if(mode === "prop"){
+    // N=0 가지: h<r 불안정, h>r 안정
+    polyline(p, [[0, 0], [r, 0]], un, 2.2, [4, 4]);
+    polyline(p, [[r, 0], [xmax, 0]], st, 2.6);
+    // N=K(1-h/r) 가지: h<r 안정, h>r 불안정(음수 영역)
+    polyline(p, [[0, K], [r, 0]], st, 2.6);
+    polyline(p, [[r, 0], [xmax, K * (1 - xmax / r)]], un, 2.2, [4, 4]);
+    dot(p, r, 0, warn, true, 6);
+    label(p, r, 0, "초임계 분기 h* = r", warn, "center", -16);
+    label(p, xmax * 0.5, K * 0.75, "두 가지가 교차하며 안정성을 맞바꿈", muted, "center", 0);
+  }else{
+    const Hs = bp, pts1 = [], pts2 = [];
+    for(let i = 0; i <= 300; i++){
+      const H = Hs * i / 300, s = Math.sqrt(Math.max(0, 1 - H / Hs));
+      pts1.push([H, K / 2 * (1 + s)]);
+      pts2.push([H, K / 2 * (1 - s)]);
+    }
+    // 평형점이 없는 구간 음영
+    clip(p, () => {
+      ctx.save(); ctx.fillStyle = un + "18";
+      ctx.fillRect(X(Hs), Y(p.dom.y1), X(xmax) - X(Hs), Y(p.dom.y0) - Y(p.dom.y1));
+      ctx.restore();
+    });
+    label(p, (Hs + xmax) / 2, K * 0.72, "평형점 없음", un, "center", 0);
+    label(p, (Hs + xmax) / 2, K * 0.72, "→ 반드시 붕괴", un, "center", 16);
+    polyline(p, pts1, st, 2.6);
+    polyline(p, pts2, un, 2.2, [4, 4]);
+    dot(p, Hs, K / 2, warn, true, 6);
+    label(p, Hs, K / 2, "안장-마디 분기 H* = rK/4", warn, "right", -26);
+  }
+
+  // 현재 설정
+  vline(p, h, p.dom.y0, p.dom.y1, acc2, [3, 3]);
+  equilibria().forEach(e => dot(p, h, e.N, acc2, e.stable !== false, 5));
+  label(p, h, p.dom.y0, mode === "prop" ? "현재 h" : "현재 H", acc2, "center", -8);
+}
+
+/* ---------- ④ 1인당 성장률 ---------- */
+function drawPer(){
+  const { r, K, N0, mode, h } = P;
+  const x1 = K * 1.45;
+  const g = N => r * (1 - N / K) - (mode === "prop" ? h : h / N);
+  const p = makeAxes(document.getElementById("cPer"),
+    { x0: -K * 0.06, x1, y0: Math.min(r * (1 - 1.45) * 1.2, -r * 0.55), y1: r * 1.3 },
+    { xlabel: "개체수 N", ylabel: "(1/N)·dN/dt" });
+  const acc = css("--accent"), acc2 = css("--accent2"), st = css("--stable"),
+        un = css("--unstable"), faint = css("--faint");
+
+  curve(p, x => r * (1 - x / K), -K * 0.06, x1, faint, 1.4, [5, 4]);
+  curve(p, g, mode === "prop" ? -K * 0.06 : K * 0.004, x1, acc, 2.2);
+  equilibria().forEach(e => { if(e.N > 1e-9) dot(p, e.N, 0, e.stable ? st : un, e.stable !== false, 4.5); });
+  if(N0 <= x1 && isFinite(g(N0))) dot(p, N0, g(N0), acc2, true, 4.5);
+
+  document.getElementById("perNote").textContent = mode === "prop"
+    ? "비례 수확은 직선을 h만큼 평행이동 — y절편이 r−h로 낮아지고 근이 K(1−h/r)로 당겨집니다"
+    : "정량 수확은 1인당 수확률이 H/N — 개체수가 적을수록 치명적이라 곡선이 왼쪽에서 −∞로 발산합니다";
+}
+
+/* ---------- 상태·통계 ---------- */
+function stats(){
+  const { mode, h, r, K } = P;
+  const eqs = equilibria();
+  document.getElementById("sEq").textContent =
+    eqs.length ? eqs.map(e => e.N.toFixed(0)).join(", ") : "없음";
+  document.getElementById("sBifK").textContent = mode === "prop" ? "초임계 분기 h*" : "안장-마디 분기 H*";
+  document.getElementById("sBif").textContent = mode === "prop" ? r.toFixed(2) : (r * K / 4).toFixed(1);
+  document.getElementById("sMsy").textContent = "rK/4 = " + msy().toFixed(1);
+  document.getElementById("sYield").textContent = yieldNow().toFixed(1);
+
+  const bp = bifPoint(), el = document.getElementById("status");
+  const ratio = h / bp;
+  let cls, msg;
+  if(h === 0){
+    cls = "ok"; msg = "<b>수확 없음.</b> 순수 로지스틱 — 모든 초기값이 K로 수렴합니다.";
+  }else if(ratio > 1.0001){
+    cls = "bad";
+    msg = mode === "prop"
+      ? "<b>h > r — 분기점 통과.</b> 양의 평형점이 사라지고 N=0이 안정해졌습니다. 어떤 초기값에서 시작해도 멸종합니다."
+      : "<b>H > rK/4 — 안장-마디 분기 통과.</b> 포물선이 x축 아래로 완전히 내려가 평형점이 존재하지 않습니다. 개체군은 유한 시간 안에 붕괴합니다.";
+  }else if(ratio > 0.97){
+    cls = "edge";
+    msg = "<b>분기점 바로 앞.</b> " + (mode === "prop"
+      ? "양의 평형점이 0에 거의 닿았습니다. 회복이 극도로 느려집니다(임계 감속)."
+      : "두 평형점이 N=K/2에서 합쳐지기 직전입니다. 조금만 더 수확하면 되돌릴 수 없이 붕괴합니다.");
+  }else{
+    cls = "ok";
+    msg = mode === "prop"
+      ? "<b>지속 가능.</b> 양의 평형점이 안정합니다. 0에서 출발하지만 않으면 N*로 수렴합니다."
+      : "<b>조건부 지속 가능.</b> 평형점이 두 개입니다 — N₀가 멸종 문턱(작은 근)보다 커야만 살아남습니다.";
+  }
+  el.className = "status " + cls;
+  el.innerHTML = msg;
+
+  document.getElementById("bifNote").textContent = mode === "prop"
+    ? "h = r 에서 두 가지가 교차 (초임계/transcritical)"
+    : "H = rK/4 에서 두 가지가 만나 소멸 (안장-마디/saddle-node)";
+  document.getElementById("eqline").textContent = mode === "prop"
+    ? "dN/dt = r·N·(1 − N/K) − h·N   =  −(r/K)·N² + (r − h)·N"
+    : "dN/dt = r·N·(1 − N/K) − H   =  −(r/K)·N² + r·N − H";
+}
+
+/* ---------- 입력 ---------- */
+function syncHSlider(keepValue){
+  const s = document.getElementById("hv0");
+  const prevRatio = keepValue ? (parseFloat(s.value) / parseFloat(s.max)) : null;
+  if(P.mode === "prop"){
+    s.min = 0; s.max = 1.6; s.step = 0.005;
+    document.getElementById("hname").textContent = "h";
+    document.getElementById("hhint").textContent = "개체수에 비례한 수확률. h = r 에서 초임계 분기";
+  }else{
+    s.min = 0; s.max = Math.max(1, (P.r * P.K / 4) * 1.7); s.step = 0.5;
+    document.getElementById("hname").textContent = "H";
+    document.getElementById("hhint").textContent = "단위 시간당 고정 수확량. H = rK/4 에서 안장-마디 분기";
+  }
+  if(prevRatio !== null) s.value = (prevRatio * parseFloat(s.max)).toFixed(3);
+  if(parseFloat(s.value) > parseFloat(s.max)) s.value = s.max;
+}
+
+function render(){
+  P.mode = document.querySelector('input[name="mode"]:checked').value;
+  ["r", "K", "N0", "tmax"].forEach(k => { P[k] = parseFloat(document.getElementById(k).value); });
+  P.h = parseFloat(document.getElementById("hv0").value);
+  document.getElementById("rv").textContent = P.r.toFixed(2);
+  document.getElementById("Kv").textContent = P.K.toFixed(0);
+  document.getElementById("N0v").textContent = P.N0.toFixed(0);
+  document.getElementById("tmaxv").textContent = P.tmax.toFixed(0);
+  document.getElementById("hv").textContent = P.mode === "prop" ? P.h.toFixed(3) : P.h.toFixed(1);
+  drawPara(); drawTime(); drawBif(); drawPer(); stats();
+}
+
+document.querySelectorAll('input[name="mode"]').forEach(el => el.addEventListener("change", () => {
+  P.mode = el.value; syncHSlider(true); render();
+}));
+["hv0", "r", "K", "N0", "tmax", "multi", "showParts"].forEach(id =>
+  document.getElementById(id).addEventListener("input", e => {
+    if(id === "r" || id === "K"){ P.r = parseFloat(document.getElementById("r").value);
+      P.K = parseFloat(document.getElementById("K").value); syncHSlider(true); }
+    render();
+  }));
+
+document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => {
+  const [mode, h, r, K, N0, tmax] = b.dataset.preset.split(",");
+  document.querySelector('input[name="mode"][value="' + mode + '"]').checked = true;
+  P.mode = mode; P.r = +r; P.K = +K;
+  document.getElementById("r").value = r;
+  document.getElementById("K").value = K;
+  document.getElementById("N0").value = N0;
+  document.getElementById("tmax").value = tmax;
+  syncHSlider(false);
+  document.getElementById("hv0").value = h;
+  render();
+}));
+
+window.addEventListener("resize", render);
+if(window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+syncHSlider(false);
+document.getElementById("hv0").value = 0.2;
+render();
+</script>
+</body>
+</html>
