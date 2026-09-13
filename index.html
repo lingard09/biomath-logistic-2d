@@ -10,6 +10,7 @@
     --line:#d9dde3; --grid:#eceff3; --accent:#2563eb; --accent2:#d9480f;
     --stable:#0f9d58; --unstable:#d93025; --faint:#9aa3af; --warn:#b45309;
     --shadow:0 1px 3px rgba(0,0,0,.07);
+    --shadow-float:0 10px 28px -6px rgba(15,23,42,.18), 0 2px 6px rgba(15,23,42,.08);
   }
   @media (prefers-color-scheme: dark){
     :root{
@@ -17,6 +18,7 @@
       --line:#2b3139; --grid:#22272e; --accent:#5b9bff; --accent2:#ff9d5c;
       --stable:#3ddc84; --unstable:#ff6b5e; --faint:#4d5561; --warn:#f0b429;
       --shadow:none;
+      --shadow-float:0 14px 34px -8px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.05);
     }
   }
   *{box-sizing:border-box}
@@ -28,7 +30,22 @@
   main{max-width:1180px;margin:0 auto;padding:8px 24px 40px;display:grid;
     grid-template-columns:290px 1fr;gap:18px;align-items:start}
   @media (max-width:900px){ main{grid-template-columns:1fr} }
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;
+    box-shadow:var(--shadow);transition:box-shadow .22s ease, transform .22s ease, border-color .22s ease}
+  /* 스크롤해도 파라미터 패널이 따라다니도록 */
+  main > .card{position:sticky;top:16px;max-height:calc(100vh - 32px);overflow-y:auto;
+    scrollbar-width:thin;z-index:5}
+  main > .card::-webkit-scrollbar{width:8px}
+  main > .card::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
+  body.scrolled main > .card{box-shadow:var(--shadow-float);transform:translateY(-1px);border-color:var(--accent)}
+  /* 그래프 카드는 제목 줄만 카드 안에서 고정 */
+  .plots .card h2{position:sticky;top:-2px;z-index:2;background:var(--panel);
+    margin:-4px -4px 10px;padding:4px 4px 8px}
+  @media (max-width:900px){
+    main > .card{position:static;max-height:none;overflow:visible}
+    body.scrolled main > .card{box-shadow:var(--shadow);transform:none;border-color:var(--line)}
+  }
+  @media (prefers-reduced-motion: reduce){ .card{transition:none} }
   .card h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:600;letter-spacing:.02em}
   .ctrl{margin-bottom:15px}
   .ctrl label{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:6px}
@@ -633,6 +650,14 @@ document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("clic
   document.getElementById("hv0").value = h;
   render();
 }));
+
+let _sc = false;
+function onScroll(){
+  const on = window.scrollY > 8;
+  if(on !== _sc){ _sc = on; document.body.classList.toggle("scrolled", on); }
+}
+window.addEventListener("scroll", onScroll, { passive: true });
+onScroll();
 
 window.addEventListener("resize", render);
 if(window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
