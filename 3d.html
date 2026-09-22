@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로지스틱 성장 + 수확 · 3D 확장 (접힘 곡면 / 쌍안정성)</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --ink:#15181d; --muted:#6b7280;
+    --line:#d9dde3; --grid:#eceff3; --accent:#2563eb; --accent2:#d9480f;
+    --stable:#0f9d58; --unstable:#d93025; --faint:#9aa3af; --warn:#b45309;
+    --shadow:0 1px 3px rgba(0,0,0,.07);
+    --shadow-float:0 10px 28px -6px rgba(15,23,42,.18), 0 2px 6px rgba(15,23,42,.08);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#101317; --panel:#171b21; --ink:#e8ebef; --muted:#98a1ae;
+      --line:#2b3139; --grid:#22272e; --accent:#5b9bff; --accent2:#ff9d5c;
+      --stable:#3ddc84; --unstable:#ff6b5e; --faint:#4d5561; --warn:#f0b429;
+      --shadow:none;
+      --shadow-float:0 14px 34px -8px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.05);
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Segoe UI",Roboto,sans-serif;}
+  header{padding:22px 24px 10px;max-width:1180px;margin:0 auto;display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+  h1{font-size:20px;margin:0 0 6px;letter-spacing:-.2px}
+  .eq{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:13.5px;color:var(--muted)}
+  a.nav{font-size:13px;color:var(--accent);text-decoration:none;white-space:nowrap}
+  a.nav:hover{text-decoration:underline}
+  main{max-width:1180px;margin:0 auto;padding:8px 24px 40px;display:grid;
+    grid-template-columns:290px 1fr;gap:18px;align-items:start}
+  @media (max-width:900px){ main{grid-template-columns:1fr} }
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;
+    box-shadow:var(--shadow)}
+  main > .card:first-child{position:sticky;top:16px;max-height:calc(100vh - 32px);overflow-y:auto;z-index:5}
+  @media (max-width:900px){ main > .card:first-child{position:static;max-height:none} }
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:600;letter-spacing:.02em}
+  .ctrl{margin-bottom:15px}
+  .ctrl label{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:6px}
+  .ctrl .val{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:13px;color:var(--accent)}
+  input[type=range]{width:100%;accent-color:var(--accent);margin:0}
+  .hint{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5}
+  .seg{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:14px}
+  .seg label{text-align:left;font-size:12.5px;padding:9px 10px;cursor:pointer;color:var(--muted);border-bottom:1px solid var(--line)}
+  .seg label:last-child{border-bottom:none}
+  .seg input{display:none}
+  .seg input:checked + span{color:var(--panel);display:block;margin:-9px -10px;padding:9px 10px;background:var(--accent)}
+  .seg small{display:block;font-weight:400;opacity:.8;margin-top:2px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:10px}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .plots{display:grid;gap:18px}
+  .stage{position:relative;height:560px;border-radius:8px;overflow:hidden;background:var(--grid)}
+  #gl{width:100%;height:100%;display:block;touch-action:none}
+  .stage .hud{position:absolute;left:10px;top:10px;font-size:11px;color:var(--muted);
+    background:color-mix(in srgb, var(--panel) 82%, transparent);padding:6px 9px;border-radius:7px;line-height:1.6}
+  .stage .hud b{color:var(--ink)}
+  #map{width:100%;height:230px;display:block;border-radius:8px;background:var(--grid)}
+  footer{max-width:1180px;margin:0 auto;padding:0 24px 48px;font-size:12.5px;color:var(--muted);line-height:1.75}
+  footer h3{font-size:13px;color:var(--ink);margin:18px 0 6px}
+  code{font-family:"SF Mono",ui-monospace,Menlo,monospace;background:var(--grid);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>3D 확장 — 접힘 곡면(fold surface)과 알리 효과 쌍안정성(bistability)</h1>
+    <div class="eq" id="eqline"></div>
+  </div>
+  <a class="nav" href="index.html">← 2D 사이트로 돌아가기</a>
+</header>
+
+<main>
+  <section class="card" aria-label="파라미터">
+    <h2>모델 선택</h2>
+    <div class="seg">
+      <label><input type="radio" name="model" value="fold" checked>
+        <span>안장-마디 접힘 곡면<small>rN(1−N/K) − H, 축: H · K · N</small></span></label>
+      <label><input type="radio" name="model" value="cusp">
+        <span>알리 효과 쌍안정성<small>rN(1−N/K)(N/A−1) − hN, 축: h · A · N</small></span></label>
+    </div>
+
+    <h2 style="margin-top:18px">파라미터</h2>
+    <div class="ctrl">
+      <label for="r">내재적 증가율 r <span class="val" id="rv"></span></label>
+      <input type="range" id="r" min="0.05" max="2" step="0.01" value="0.6">
+    </div>
+    <div class="ctrl" id="boxK">
+      <label for="K">환경 수용력 K <span class="val" id="Kv"></span></label>
+      <input type="range" id="K" min="100" max="2000" step="10" value="1000">
+      <div class="hint" id="Khint"></div>
+    </div>
+
+    <div class="legend">
+      <span><i style="background:var(--stable)"></i>안정 평형</span>
+      <span><i style="background:var(--unstable)"></i>불안정 평형</span>
+    </div>
+    <div class="hint" style="margin-top:12px" id="modelDesc"></div>
+
+    <h2 style="margin-top:18px">보기</h2>
+    <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="resetView">시점 초기화</button>
+    </div>
+    <div class="hint" style="margin-top:8px">드래그로 회전, 스크롤로 확대/축소, 오른쪽 드래그로 이동.</div>
+  </section>
+
+  <section class="plots">
+    <div class="card">
+      <h2 id="stageTitle">3D 평형 곡면</h2>
+      <div class="stage">
+        <canvas id="gl"></canvas>
+        <div class="hud" id="hud"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2 id="mapTitle">제어변수 평면 위 분기 집합 (fold/cusp 투영)</h2>
+      <canvas id="map"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--accent)"></i><span id="legHigh">평형 2개 영역</span></span>
+        <span><i style="background:var(--faint)"></i><span id="legLow">평형 0개 영역</span></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <h3>이게 무엇을 보여주나</h3>
+  <p>
+    <a href="index.html">2D 사이트</a>에서는 정량 수확 모델 <code>dN/dt = rN(1−N/K) − H</code>의 평형점을
+    H 하나만 움직이며 관찰했습니다. 여기서는 <b>두 번째 파라미터</b>(K 또는 알리 효과 임계값 A)를 추가로
+    변수로 두고, 평형 개체수 N*을 (H 또는 h, 두번째 파라미터) 평면 위의 <b>곡면 높이</b>로 그립니다.
+    안장-마디 분기점은 이 곡면이 접히는 <b>능선(fold curve)</b>이고,
+    두 파라미터를 함께 바꾸면 능선 자체가 그리는 곡선이 아래쪽 2D 지도에 나타납니다.
+  </p>
+  <h3>접힘 곡면 vs 진짜 쌍안정성 (왜 수확 방식을 바꿨는가)</h3>
+  <p>
+    처음에는 알리 효과 모델에도 그대로 정량 수확(<code>−H</code>)을 써서 "컵 파국"을 그리려 했지만,
+    직접 계산해보니 정량 수확은 N=0에서도 개체를 계속 제거하려 하기 때문에 <b>H&gt;0이면 N=0이 아예
+    평형이 아니게 됩니다</b>. 그 결과 평형 3개가 존재하는 구간은 H=0인 점 하나뿐이고, 진짜 쌍안정
+    영역(열린 구간)은 나오지 않았습니다 — 처음 화면에 지도가 비어 있던 이유입니다.
+  </p>
+  <p>
+    그래서 알리 효과 모델은 <b>비례 수확(<code>−hN</code>)</b>으로 바꿨습니다:
+    <code>dN/dt = rN(1−N/K)(N/A−1) − hN</code>. 비례 수확은 N=0에서 정확히 0이 되므로, N=0(멸종)은
+    h가 얼마든 <b>항상 안정 평형으로 남습니다</b>(3D 화면의 옅은 초록 평면). 나머지 두 평형(불안정 문턱과
+    그 위의 안정 평형)은 h가 커지면 접혀서 사라지고, 그 순간 개체군은 h를 낮춰도 저절로 돌아오지 않는
+    N=0으로 떨어집니다 — 이것이 유전자 스위치·세포 운명 결정에서 보는 <b>쌍안정성과 이력현상</b>과
+    구조적으로 대응되는 지점입니다. (엄밀한 의미의 "컵 파국" 특이점은 아니고, "항상 존재하는 안정 상태 +
+    접혀 사라지는 한 쌍의 평형"이라는, 실제 생물학적 스위치에 더 가까운 구조입니다.)
+  </p>
+  <h3>수업에서 보여줄 때</h3>
+  <p>
+    1) 먼저 접힘 곡면에서 K를 고정한 단면이 정확히 2D 사이트의 정량 수확 분기 다이어그램과 같은 곡선임을
+    확인. 2) 쌍안정 모델로 전환해 A를 작게 시작해 점점 크게 하면서, 아래 2D 지도의 "평형 3개" 쐐기 영역이
+    좁아지는 것을 시연 — A가 클수록(알리 효과가 강할수록) 안전하게 수확할 수 있는 h의 폭이 줄어든다는 뜻.
+    3) 3D 곡면을 회전시켜 초록 평면(N=0) 위로 안정−불안정 시트가 접혀 나타났다 사라지는 모습을 보여주고,
+    h를 낮췄다 다시 낮춰도 이미 초록 평면(N=0)에 있으면 회복되지 않는다는 이력현상을 강조.
+  </p>
+</footer>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const $ = s => document.querySelector(s);
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// ---------- DOM ----------
+const elModel = () => document.querySelector('input[name=model]:checked').value;
+const rEl = $('#r'), KEl = $('#K');
+const rv = $('#rv'), Kv = $('#Kv'), Khint = $('#Khint');
+const eqline = $('#eqline'), modelDesc = $('#modelDesc');
+const stageTitle = $('#stageTitle'), mapTitle = $('#mapTitle');
+const hud = $('#hud');
+
+// ---------- three.js setup ----------
+const canvas = $('#gl');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+const DEFAULT_CAM = new THREE.Vector3(7.5, 5.5, 8.5);
+camera.position.copy(DEFAULT_CAM);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.6, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.update();
+
+let surfMesh = null, ridgeLine = null, floorGrid = null, axesGroup = null, zeroPlaneMesh = null;
+
+function makeLabelSprite(text, color){
+  const cvs = document.createElement('canvas');
+  const scale = 4;
+  cvs.width = 256*scale; cvs.height = 64*scale;
+  const ctx = cvs.getContext('2d');
+  ctx.scale(scale,scale);
+  ctx.font = '600 30px -apple-system, sans-serif';
+  ctx.fillStyle = color;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 4, 32);
+  const tex = new THREE.CanvasTexture(cvs);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.SpriteMaterial({map:tex, transparent:true, depthTest:false});
+  const spr = new THREE.Sprite(mat);
+  spr.scale.set(1.8, 0.45, 1);
+  spr.renderOrder = 10;
+  return spr;
+}
+
+function resize(){
+  const box = canvas.parentElement.getBoundingClientRect();
+  renderer.setSize(box.width, box.height, false);
+  camera.aspect = box.width / box.height;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(canvas.parentElement);
+
+// ---------- math ----------
+// Fold model:  dN/dt = r N (1 - N/K) - H
+//   parametrize by (u=N/K in [0,1], K). H(u,K) = r K u (1-u).  dH/du (at fixed K) = rK(1-2u).
+// Cusp model:  dN/dt = r N (1 - N/K)(N/A - 1) - H ; v = A/K in (0,1)
+//   parametrize by (u=N/K in [0,1], v). H(u,v) = r K u(1-u)(u/v - 1) = r K u(1-u)(u-v)/v
+
+const GRID = 70; // resolution along each axis
+
+function foldGrid(r, Kmin, Kmax){
+  const rows = GRID, cols = GRID;
+  const H = [], K = [], N = [];
+  for(let j=0;j<=cols;j++){
+    const Kj = Kmin + (Kmax-Kmin)*j/cols;
+    const rowH=[], rowN=[];
+    for(let i=0;i<=rows;i++){
+      const u = i/rows;
+      rowH.push(r*Kj*u*(1-u));
+      rowN.push(u*Kj);
+    }
+    H.push(rowH); K.push(Kj); N.push(rowN);
+  }
+  return {H, param:K, N, rows, cols, paramLabel:'K', paramName:'K'};
+}
+
+// Nonzero equilibria of dN/dt = rN(1-N/K)(N/A-1) - hN, i.e. r(1-u)(u/v-1) = h
+// (u=N/K, v=A/K). N=0 is a SEPARATE equilibrium, always present and always stable
+// for h>=0 (unlike constant-yield -H, proportional harvesting vanishes at N=0),
+// so this grid only needs to cover the two nonzero roots: u sweeps [v,1], where
+// h(u,v) is 0 at both ends and rises to a single interior peak — a clean fold,
+// same shape as the basic model, but paired with the ever-present N=0 sheet this
+// produces genuine bistability (0 + 2 more) over an open range of h, not just a point.
+function cuspGrid(r, K, vmin, vmax){
+  const rows = GRID, cols = GRID;
+  const H = [], V = [], N = [];
+  for(let j=0;j<=cols;j++){
+    const v = vmin + (vmax-vmin)*j/cols;
+    const rowH=[], rowN=[];
+    for(let i=0;i<=rows;i++){
+      const u = v + (1-v)*i/rows; // u sweeps [v, 1]
+      rowH.push(r*(1-u)*(u-v)/v);
+      rowN.push(u*K);
+    }
+    H.push(rowH); V.push(v*K); N.push(rowN); // store A in absolute units
+  }
+  return {H, param:V, N, rows, cols, paramLabel:'A', paramName:'A'};
+}
+
+// numeric d(H)/d(u) along i-index (rows dimension) per column, for stability + fold detection
+function stabilityAndFolds(grid){
+  const {H, rows, cols} = grid;
+  const dH = [];
+  const foldPts = []; // {i,j,H,param,N}
+  const foldIdxPerRow = []; // per column j: sorted list of u-indices where a turning point sits
+  for(let j=0;j<=cols;j++){
+    const col = [];
+    for(let i=0;i<=rows;i++){
+      let d;
+      if(i===0) d = H[j][1]-H[j][0];
+      else if(i===rows) d = H[j][rows]-H[j][rows-1];
+      else d = (H[j][i+1]-H[j][i-1])/2;
+      col.push(d);
+    }
+    dH.push(col);
+    const idxs = [];
+    for(let i=0;i<rows;i++){
+      if((col[i]>=0) !== (col[i+1]>=0)){
+        // sign change between i and i+1 -> fold point
+        const t = Math.abs(col[i])/(Math.abs(col[i])+Math.abs(col[i+1])+1e-12);
+        const Hf = H[j][i] + (H[j][i+1]-H[j][i])*t;
+        const Nf = grid.N[j][i] + (grid.N[j][i+1]-grid.N[j][i])*t;
+        foldPts.push({j, H:Hf, param:grid.param[j], N:Nf});
+        idxs.push(i);
+      }
+    }
+    foldIdxPerRow.push(idxs);
+  }
+  return {dH, foldPts, foldIdxPerRow};
+}
+
+// For each param row, split u into monotonic segments (at turning points) and record
+// the H-range each segment spans. Counting how many segments' ranges contain a given
+// H value tells you exactly how many equilibria exist at that (H, param) point —
+// this is what the control-plane map needs, not the raw turning-point count.
+function equilibriaSegments(grid, foldIdxPerRow){
+  const {H, rows, cols} = grid;
+  const segsPerRow = [];
+  for(let j=0;j<=cols;j++){
+    const bounds = [0, ...foldIdxPerRow[j], rows];
+    const segs = [];
+    for(let s=0;s<bounds.length-1;s++){
+      const i0=bounds[s], i1=bounds[s+1];
+      let lo=Infinity,hi=-Infinity;
+      for(let i=i0;i<=i1;i++){ const v=H[j][i]; if(v<lo)lo=v; if(v>hi)hi=v; }
+      segs.push([lo,hi]);
+    }
+    segsPerRow.push(segs);
+  }
+  return segsPerRow;
+}
+
+// ---------- scaling ----------
+function computeExtent(arr2d){
+  let min=Infinity, max=-Infinity;
+  for(const row of arr2d) for(const v of row){ if(v<min)min=v; if(v>max)max=v; }
+  return [min,max];
+}
+
+function buildScene(grid, dH, opts={}){
+  const {H, param, N, rows, cols} = grid;
+  const [Hmin,Hmax] = computeExtent(H);
+  const Hpad = (Hmax-Hmin)*0.02 || 1;
+  const Hlo = Math.min(0,Hmin)-Hpad, Hhi = Hmax+Hpad;
+  const pmin = param[0], pmax = param[param.length-1];
+  const [, Nmax] = computeExtent(N);
+
+  const sx = 4.2/((Hhi-Hlo)/2), sz = 3.0/((pmax-pmin)/2), sy = 3.6/Math.max(Nmax,1e-6);
+  const Hmid = (Hhi+Hlo)/2, pmid=(pmax+pmin)/2;
+
+  const toXYZ = (h,p,n) => [ (h-Hmid)*sx, n*sy, (p-pmid)*sz ];
+
+  // --- surface geometry ---
+  const nRows = rows+1, nCols = cols+1;
+  const positions = new Float32Array(nRows*nCols*3);
+  const colors = new Float32Array(nRows*nCols*3);
+  const stableCol = new THREE.Color(cssVar('--stable') || '#0f9d58');
+  const unstableCol = new THREE.Color(cssVar('--unstable') || '#d93025');
+  let p=0, c=0;
+  for(let j=0;j<nCols;j++){
+    for(let i=0;i<nRows;i++){
+      const [x,y,z] = toXYZ(H[j][i], param[j], N[j][i]);
+      positions[p++]=x; positions[p++]=y; positions[p++]=z;
+      const stable = dH[j][i] < 0;
+      const col = stable ? stableCol : unstableCol;
+      colors[c++]=col.r; colors[c++]=col.g; colors[c++]=col.b;
+    }
+  }
+  const indices = [];
+  for(let j=0;j<cols;j++){
+    for(let i=0;i<rows;i++){
+      const a=j*nRows+i, b=j*nRows+i+1, cI=(j+1)*nRows+i, d=(j+1)*nRows+i+1;
+      indices.push(a,b,d, a,d,cI);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshBasicMaterial({vertexColors:true, side:THREE.DoubleSide, transparent:true, opacity:0.92});
+  const mesh = new THREE.Mesh(geo, mat);
+
+  // --- fold ridge line(s) ---
+  const {foldPts} = stabilityAndFolds(grid);
+  // group consecutive j into polylines by proximity in N to avoid connecting far branches
+  const byJ = {};
+  for(const fp of foldPts){ (byJ[fp.j] = byJ[fp.j]||[]).push(fp); }
+  const sortedJ = Object.keys(byJ).map(Number).sort((a,b)=>a-b);
+  // build up to 2 branches by tracking N proximity across columns
+  let branches = [];
+  for(const j of sortedJ){
+    const pts = byJ[j];
+    for(const fp of pts){
+      let placed = false;
+      for(const br of branches){
+        const last = br[br.length-1];
+        if(last.j === j-1 && Math.abs(last.N-fp.N) < (pmax-pmin)*0.3+50){
+          br.push(fp); placed = true; break;
+        }
+      }
+      if(!placed) branches.push([fp]);
+    }
+  }
+  branches = branches.filter(b=>b.length>2);
+  const ridgeGroup = new THREE.Group();
+  for(const br of branches){
+    const pts3 = br.map(fp => new THREE.Vector3(...toXYZ(fp.H, fp.param, fp.N)));
+    const lg = new THREE.BufferGeometry().setFromPoints(pts3);
+    const lm = new THREE.LineBasicMaterial({color: cssVar('--accent2')||'#d9480f', linewidth:2});
+    ridgeGroup.add(new THREE.Line(lg, lm));
+  }
+
+  // --- floor grid + projected fold curve ---
+  const floor = new THREE.Group();
+  const gh = new THREE.GridHelper(8, 16, cssVar('--line')||'#d9dde3', cssVar('--line')||'#d9dde3');
+  gh.material.opacity = 0.5; gh.material.transparent = true;
+  gh.position.y = 0;
+  floor.add(gh);
+  for(const br of branches){
+    const pts3 = br.map(fp => new THREE.Vector3((fp.H-Hmid)*sx, 0.01, (fp.param-pmid)*sz));
+    const lg = new THREE.BufferGeometry().setFromPoints(pts3);
+    const lm = new THREE.LineBasicMaterial({color: cssVar('--accent')||'#2563eb', linewidth:2});
+    floor.add(new THREE.Line(lg, lm));
+  }
+
+  // --- axes ---
+  const axes = new THREE.Group();
+  const axCol = cssVar('--muted') || '#6b7280';
+  const mkAxis = (from,to) => {
+    const g = new THREE.BufferGeometry().setFromPoints([from,to]);
+    const m = new THREE.LineBasicMaterial({color:axCol});
+    return new THREE.Line(g,m);
+  };
+  axes.add(mkAxis(new THREE.Vector3(-4.4,0,0), new THREE.Vector3(4.4,0,0)));
+  axes.add(mkAxis(new THREE.Vector3(0,0,-3.2), new THREE.Vector3(0,0,3.2)));
+  axes.add(mkAxis(new THREE.Vector3(-4.4,0,-3.2), new THREE.Vector3(-4.4,4,-3.2)));
+
+  const labelH = makeLabelSprite((grid.paramName==='A' ? 'h (비례 수확률)' : 'H (수확 강도)') + ' →', axCol);
+  labelH.position.set(4.6, 0, 0);
+  const labelP = makeLabelSprite((grid.paramName)+' →', axCol);
+  labelP.position.set(-4.4, 0, 3.6);
+  const labelN = makeLabelSprite('N* ↑', axCol);
+  labelN.position.set(-4.4, 4.2, -3.2);
+  axes.add(labelH, labelP, labelN);
+
+  // --- N=0 sheet: for the Allee + proportional-harvest model, extinction is an
+  // equilibrium that persists (and stays stable) for every (h, A) pair, unlike the
+  // constant-yield fold model where N=0 only counts at h=0 exactly.
+  let zeroPlane = null;
+  if(opts.zeroPlane){
+    const z0 = new THREE.PlaneGeometry(Hhi-Hlo, pmax-pmin, 1, 1);
+    z0.rotateX(-Math.PI/2);
+    z0.translate((Hhi+Hlo)/2 - Hmid, 0.02, (pmax+pmin)/2 - pmid);
+    z0.scale(sx, 1, sz);
+    const z0mat = new THREE.MeshBasicMaterial({color: stableCol, side:THREE.DoubleSide, transparent:true, opacity:0.35});
+    zeroPlane = new THREE.Mesh(z0, z0mat);
+  }
+
+  return {mesh, ridgeGroup, floor, axes, zeroPlane};
+}
+
+function clearScene(){
+  for(const obj of [surfMesh, ridgeLine, floorGrid, axesGroup, zeroPlaneMesh]){
+    if(obj){ scene.remove(obj); }
+  }
+}
+
+function render(){
+  clearScene();
+  const model = elModel();
+  const r = parseFloat(rEl.value);
+  const K = parseFloat(KEl.value);
+
+  let grid, eq, desc;
+  if(model === 'fold'){
+    grid = foldGrid(r, 200, 2000);
+    eq = `dN/dt = rN(1−N/K) − H  ·  N* = (K/2)(1 ± √(1−4H/rK))  ·  분기: H* = rK/4`;
+    desc = 'K를 축으로 두어, K를 바꿀 때 분기점(H*=rK/4)이 원점을 지나는 직선을 따라 어떻게 이동하는지 보여줍니다. 능선(주황/파랑선)이 곧 2D 사이트의 안장-마디 분기점 자취입니다. 정량 수확(−H)은 N=0에서도 여전히 개체를 제거하려 하므로, N=0은 H>0일 때 평형이 아닙니다 — 그래서 이 곡면은 평형 2개(존재) ↔ 0개(붕괴)만 오갑니다.';
+    stageTitle.textContent = '접힘 곡면 (H, K, N*)';
+    mapTitle.textContent = '제어변수 평면 (H–K) 위 분기선';
+    Khint.textContent = '이 모드에서는 K가 곡면의 한 축이라 슬라이더 값은 참고용(카메라 이동 기준점 표시 없음)입니다.';
+    $('#legHigh').textContent = '평형 2개 영역'; $('#legLow').textContent = '평형 0개 영역';
+  } else {
+    grid = cuspGrid(r, K, 0.03, 0.9);
+    eq = `dN/dt = rN(1−N/K)(N/A−1) − hN  ·  A/K ∈ [0.03, 0.9]  ·  r=${r.toFixed(2)}, K=${K.toFixed(0)} 고정`;
+    desc = '비례 수확(−hN)은 N=0에서 정확히 0이 되므로, N=0(멸종)은 h가 얼마든 항상 안정 평형으로 남습니다(아래 옅은 초록 평면). 곡면은 나머지 두 평형(문턱 A 부근의 불안정 평형, 그 위의 안정 평형)만 나타내며, 이 둘이 h=h*(A)에서 접혀 사라지면 개체군은 바로 N=0으로 떨어집니다 — 이후 h를 다시 낮춰도 이미 0에 있으므로 저절로 회복되지 않는 진짜 이력현상(hysteresis)입니다.';
+    stageTitle.textContent = '쌍안정 곡면 + N=0 평면 (h, A, N*)';
+    mapTitle.textContent = '제어변수 평면 (h–A) 위 쌍안정 영역';
+    Khint.textContent = '알리 효과 모델에서는 K가 고정 파라미터입니다 (A가 축이 됩니다).';
+    $('#legHigh').textContent = '평형 3개 영역 (N=0 + 안정 + 불안정, 쌍안정)'; $('#legLow').textContent = '평형 1개 영역 (N=0 뿐)';
+  }
+  eqline.textContent = eq;
+  modelDesc.textContent = desc;
+
+  const {dH, foldIdxPerRow} = stabilityAndFolds(grid);
+  const segsPerRow = equilibriaSegments(grid, foldIdxPerRow);
+  const built = buildScene(grid, dH, {zeroPlane: model==='cusp'});
+  surfMesh = built.mesh; ridgeLine = built.ridgeGroup; floorGrid = built.floor; axesGroup = built.axes;
+  zeroPlaneMesh = built.zeroPlane;
+  scene.add(surfMesh, ridgeLine, floorGrid, axesGroup);
+  if(zeroPlaneMesh) scene.add(zeroPlaneMesh);
+
+  lastGrid = grid; lastSegs = segsPerRow; lastModel = model;
+  drawMap(grid, segsPerRow, model);
+  hud.innerHTML = `<b>${model==='fold' ? '접힘 곡면 (정량 수확)' : '쌍안정 곡면 (비례 수확 + 알리 효과)'}</b><br>r=${r.toFixed(2)}${model==='cusp'?`, K=${K.toFixed(0)}`:''}`;
+}
+let lastGrid=null, lastSegs=null, lastModel=null;
+new ResizeObserver(()=>{ if(lastGrid) drawMap(lastGrid,lastSegs,lastModel); }).observe($('#map'));
+
+// ---------- 2D control-plane map ----------
+function drawMap(grid, segsPerRow, model){
+  const cvs = $('#map');
+  const box = cvs.getBoundingClientRect();
+  const dpr = Math.min(devicePixelRatio,2);
+  cvs.width = box.width*dpr; cvs.height = 230*dpr;
+  cvs.style.height='230px';
+  const ctx = cvs.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const W = box.width, H = 230, pad = {l:52,r:20,t:14,b:30};
+  ctx.clearRect(0,0,W,H);
+
+  const {H:Hg, param} = grid;
+  const [Hmin,Hmax] = computeExtent(Hg);
+  const pmin = param[0], pmax = param[param.length-1];
+  const plotW = W-pad.l-pad.r, plotH = H-pad.t-pad.b;
+  const X = h => pad.l + (h-Hmin)/(Hmax-Hmin)*plotW;
+  const Y = p => H-pad.b - (p-pmin)/(pmax-pmin)*plotH;
+
+  // both grids are built over the state variable's own branch(es), so the raw root
+  // count tops out at 2 in both cases — for the cusp model that "2" sits on top of
+  // the ever-present N=0, i.e. represents the true 3-equilibria (bistable) region
+  const highCount = 2;
+
+  // rasterize equilibrium-count per (H, param) cell into an offscreen ImageData,
+  // then scale it up — counting via equilibriaSegments is exact, no guessing per-pixel
+  const nx = 160, ny = segsPerRow.length;
+  const img = ctx.createImageData(nx, ny);
+  const faint = cssVar('--faint') || '#9aa3af';
+  const accent = cssVar('--accent') || '#2563eb';
+  const faintRGB = hexToRgb(faint), accentRGB = hexToRgb(accent);
+  for(let jy=0; jy<ny; jy++){
+    const segs = segsPerRow[jy];
+    for(let ix=0; ix<nx; ix++){
+      const hVal = Hmin + (Hmax-Hmin)*ix/(nx-1);
+      let count = 0;
+      for(const [lo,hi] of segs){ if(hVal>=lo && hVal<=hi) count++; }
+      const c = count >= highCount ? accentRGB : faintRGB;
+      const alpha = count >= highCount ? 235 : 110;
+      // image row 0 = top = pmax, so flip: ImageData row jy should map to param[jy], and
+      // param increases with jy already (grid built low->high), while canvas Y grows downward
+      const row = ny-1-jy;
+      const p = (row*nx+ix)*4;
+      img.data[p]=c[0]; img.data[p+1]=c[1]; img.data[p+2]=c[2]; img.data[p+3]=alpha;
+    }
+  }
+  // draw offscreen raster scaled to the plot rect
+  const off = document.createElement('canvas');
+  off.width = nx; off.height = ny;
+  off.getContext('2d').putImageData(img,0,0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(off, pad.l, pad.t, plotW, plotH);
+
+  // axes
+  ctx.strokeStyle = cssVar('--line') || '#d9dde3';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(pad.l,pad.t,plotW,plotH);
+  ctx.fillStyle = cssVar('--muted') || '#6b7280';
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.fillText((model==='fold' ? 'H' : 'h') + ' →', W-pad.r-24, H-pad.b+18);
+  ctx.fillText(model==='fold' ? 'K' : 'A', 10, pad.t+10);
+  ctx.fillText(Hmin.toFixed(0), pad.l-4, H-pad.b+18);
+  ctx.fillText(Hmax.toFixed(0), W-pad.r-28, H-pad.b+18);
+  ctx.fillText(pmax.toFixed(0), pad.l-38, pad.t+10);
+  ctx.fillText(pmin.toFixed(0), pad.l-38, H-pad.b);
+}
+
+function hexToRgb(hex){
+  hex = hex.trim();
+  if(hex.startsWith('#')){
+    const n = parseInt(hex.slice(1),16);
+    const bigLen = hex.length === 7;
+    return bigLen ? [(n>>16)&255,(n>>8)&255,n&255] : [((n>>8)&15)*17,((n>>4)&15)*17,(n&15)*17];
+  }
+  const m = hex.match(/[\d.]+/g) || [37,99,235];
+  return m.slice(0,3).map(Number);
+}
+
+// ---------- events ----------
+document.querySelectorAll('input[name=model]').forEach(el=>el.addEventListener('change', render));
+[rEl,KEl].forEach(el=>el.addEventListener('input', ()=>{
+  rv.textContent = parseFloat(rEl.value).toFixed(2);
+  Kv.textContent = parseFloat(KEl.value).toFixed(0);
+  render();
+}));
+$('#resetView').addEventListener('click', ()=>{
+  camera.position.copy(DEFAULT_CAM);
+  controls.target.set(0,1.6,0);
+  controls.update();
+});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+
+function tick(){
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+rv.textContent = parseFloat(rEl.value).toFixed(2);
+Kv.textContent = parseFloat(KEl.value).toFixed(0);
+resize();
+render();
+tick();
+</script>
+</body>
+</html>
